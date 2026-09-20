@@ -1,0 +1,8 @@
+/fhir-client-agent
+/dist/
+*.test
+# 受信トークンが入る。テンプレートは .env.example。
+.env
+.env.*
+!.env.example
+/spool/

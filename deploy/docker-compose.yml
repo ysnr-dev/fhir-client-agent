@@ -1,0 +1,26 @@
+# 院内サーバーで Docker を使って常駐させる場合。
+#
+#   cp ../.env.example .env && vi .env
+#   docker compose up -d && docker compose logs -f
+services:
+  fhir-client-agent:
+    build: ..
+    image: fhir-client-agent
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SPOOL_DIR: /spool
+    volumes:
+      - spool:/spool
+    # 連携先が同じホストで動いている場合(ORCA_WS_URL=ws://host.docker.internal:8000/ws)。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  spool:

@@ -1,0 +1,38 @@
+# 院内サーバー(Linux)で常駐させる systemd unit。
+#
+#   sudo useradd --system --no-create-home fhir-agent
+#   sudo install -D -m 755 fhir-client-agent-linux-amd64 /opt/fhir-client-agent/fhir-client-agent
+#   sudo install -D -m 600 -o fhir-agent .env.example /etc/fhir-client-agent.env   # 編集する
+#   sudo install -d -o fhir-agent /var/lib/fhir-client-agent/spool
+#   sudo cp fhir-client-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now fhir-client-agent
+#   journalctl -u fhir-client-agent -f
+[Unit]
+Description=fhir-client on-premise agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fhir-agent
+EnvironmentFile=/etc/fhir-client-agent.env
+Environment=SPOOL_DIR=/var/lib/fhir-client-agent/spool
+ExecStart=/opt/fhir-client-agent/fhir-client-agent
+
+# 連携先への再接続はプロセス内で行う。ここはプロセスごと落ちたときの備え。
+Restart=always
+RestartSec=10
+# SIGTERM で未送信のイベントを退避してから終わる。その猶予。
+TimeoutStopSec=30
+
+# 受信トークンと患者の通知を扱うので、触れる範囲を絞る。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fhir-client-agent
+
+SyslogIdentifier=fhir-client-agent
+
+[Install]
+WantedBy=multi-user.target
