@@ -22,5 +22,26 @@ services:
         max-size: "10m"
         max-file: "5"
 
+
+  # SS-MIX2 標準化ストレージへの書き出し(2 つ目のプロセス)。出力先の共有フォルダを bind mount し、
+  # カルテの施設設定の root_path にはコンテナ内のパス(/ssmix2/…)を書く。
+  # 使わないなら消すか、profiles で切る。
+  fhir-client-agent-ssmix2:
+    build: ..
+    image: fhir-client-agent
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      AGENT_ADAPTER: ssmix2-storage
+      SSMIX2_ALLOWED_ROOT: /ssmix2
+    volumes:
+      - /mnt/ssmix2:/ssmix2
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 volumes:
   spool:

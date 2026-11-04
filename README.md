@@ -26,6 +26,7 @@ Go 製の単一バイナリで、院内機に Go も Ruby も Docker も要り�
 | `AGENT_ADAPTER` | 連携先 | 方式 |
 |---|---|---|
 | `orca-push`(既定) | 日レセ(WebORCA)の PUSH 通知 | WebSocket を購読 |
+| `ssmix2-storage` | SS-MIX2 標準化ストレージ(院内の共有フォルダ) | カルテからメッセージを取りに行き、ファイルを書く |
 
 ### orca-push が中継するもの
 
@@ -49,6 +50,26 @@ Go 製の単一バイナリで、院内機に Go も Ruby も Docker も要り�
                  "department_code": "01", "physician_code": "10001", "coverage_set_key": "0001" } }
 ```
 
+### ssmix2-storage が書くもの
+
+向きが逆のアダプタで、カルテ(fhir-client)が FHIR への書き込みから起こした HL7 v2.5 のメッセージを
+`GET /integrations/ssmix2/messages` で取りに行き、カルテの施設設定「SS-MIX2 標準化ストレージ」で決めた
+出力先(`root_path`)の下に、標準化ストレージの規則で置きます(設計は fhir-client の `docs/ssmix2-export-design.md`)。
+
+```
+<root_path>/患者ID先頭3/患者ID次の3/患者ID/診療日/データ種別/
+  患者ID_診療日_データ種別_オーダNo_トランザクション日時_診療科_コンディションフラグ
+```
+
+- 新規・修正(`INS`)は同じオーダの有効ファイル(`_1`)を過去履歴(`_2`)に改名してから `_1` で書く。
+  取消(`DEL`)は `_1` と `_2` を無効(`_0`)に改名し、取消の電文を `_0` で書く。
+- 書けた id を `POST …/messages/ack` で返す。返せなくてもカルテが配り直し、同じファイル名が既にあれば
+  何もしないので二重には書かない。
+- 出力先はカルテが決める。`SSMIX2_ALLOWED_ROOT` を置くと、その下以外の出力先は拒んで ack せずに残す。
+- 電文の中身(文字コード CP50221、セグメント)はカルテが組む。このアダプタは触らない。
+- 日レセ連携と同じ院内サーバーで動かすときは、`AGENT_ADAPTER` を変えた **2 つ目のプロセス**として起動する
+  (1 プロセス 1 連携)。
+
 ## 動かす場所
 
 **院内サーバー 1 台で 1 プロセスだけ。** クライアント PC には入れません。
@@ -64,11 +85,14 @@ Go 製の単一バイナリで、院内機に Go も Ruby も Docker も要り�
 | 変数 | 既定 | 内容 |
 |---|---|---|
 | `AGENT_ADAPTER` | `orca-push` | 動かす連携。1 プロセス 1 連携 |
-| `KARTE_EVENTS_URL` | (必須) | `https://<カルテ>/integrations/receipt/events` |
+| `KARTE_EVENTS_URL` | (orca-push で必須) | `https://<カルテ>/integrations/receipt/events` |
 | `KARTE_INBOUND_TOKEN` | (必須) | カルテの 管理 > 外部システム連携 >「受信トークンを再発行」で発行 |
 | `SPOOL_DIR` | バイナリの隣の `spool/` | 送れなかったイベントの退避先 |
 | `HEALTH_ADDR` | (待ち受けない) | 例 `127.0.0.1:8787`。`/healthz` を出す |
 | `LOG_LEVEL` | `INFO` | `DEBUG` にすると捨てたイベントも出る |
+| `KARTE_SSMIX2_URL` | (ssmix2-storage で必須) | `https://<カルテ>/integrations/ssmix2/messages` |
+| `SSMIX2_POLL_INTERVAL` | `10s` | 取りに行く間隔 |
+| `SSMIX2_ALLOWED_ROOT` | (制限しない) | カルテが指定した出力先を、この下に限る |
 | `ORCA_WS_URL` | `ws://localhost:8000/ws` | 日レセの PUSH 接続先 |
 | `ORCA_TENANT_ID` | `1` | `X-GINBEE-TENANT-ID`。オンプレは 1 固定 |
 | `ORCA_TLS_CERT` / `_KEY` / `_CA` | — | クラウド版の SSL クライアント認証 |
@@ -113,6 +137,10 @@ docker compose up -d && docker compose logs -f
 
 ```
 KARTE_EVENTS_URL=http://localhost:3001/integrations/receipt/events \
+KARTE_INBOUND_TOKEN=<トークン> go run .
+
+# SS-MIX2 への書き出し(出力先はカルテの施設設定で決める)
+AGENT_ADAPTER=ssmix2-storage KARTE_SSMIX2_URL=http://localhost:3001/integrations/ssmix2/messages \
 KARTE_INBOUND_TOKEN=<トークン> go run .
 ```
 
@@ -164,6 +192,7 @@ internal/
   agent/                      常駐の土台: 再接続(バックオフ)、稼働状況、/healthz
   deliver/                    送達: リトライ → 退避 → 順序を保って再送
   adapter/orcapush/           日レセ PUSH 通知。日レセの語彙はここで完結
+  adapter/ssmix2/             SS-MIX2 標準化ストレージへの書き出し。フォルダ・ファイル名・フラグの規則はここ
 deploy/                       systemd unit、docker-compose
 ```
 

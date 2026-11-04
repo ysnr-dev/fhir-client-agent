@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Config はアダプタに依らない共通設定。
@@ -30,6 +31,19 @@ type Config struct {
 	LogLevel slog.Level
 
 	Orca OrcaPush
+
+	Ssmix2 Ssmix2Storage
+}
+
+// Ssmix2Storage は SS-MIX2 標準化ストレージへの書き出しアダプタの設定。
+// カルテから HL7 メッセージを取りに行き、カルテが指定した出力先に書く。
+type Ssmix2Storage struct {
+	// MessagesURL はカルテの受け渡し口(…/integrations/ssmix2/messages)。
+	MessagesURL string
+	// PollInterval は取りに行く間隔。
+	PollInterval time.Duration
+	// AllowedRoot が空でなければ、カルテが指定した出力先はこの下でなければ書かない。
+	AllowedRoot string
 }
 
 // OrcaPush は日レセ PUSH 通知アダプタの設定。
@@ -43,8 +57,11 @@ type OrcaPush struct {
 }
 
 const (
-	AdapterOrcaPush = "orca-push"
+	AdapterOrcaPush      = "orca-push"
+	AdapterSsmix2Storage = "ssmix2-storage"
 )
+
+const defaultSsmix2PollInterval = 10 * time.Second
 
 // Load は getenv から設定を組み立てて検証する。getenv を注入するのはテストのため。
 func Load(getenv func(string) string, exeDir string) (Config, error) {
@@ -63,6 +80,10 @@ func Load(getenv func(string) string, exeDir string) (Config, error) {
 			TLSKey:   getenv("ORCA_TLS_KEY"),
 			TLSCA:    getenv("ORCA_TLS_CA"),
 		},
+		Ssmix2: Ssmix2Storage{
+			MessagesURL: strings.TrimSpace(getenv("KARTE_SSMIX2_URL")),
+			AllowedRoot: strings.TrimSpace(getenv("SSMIX2_ALLOWED_ROOT")),
+		},
 	}
 
 	level, err := parseLevel(getenv("LOG_LEVEL"))
@@ -72,11 +93,6 @@ func Load(getenv func(string) string, exeDir string) (Config, error) {
 	cfg.LogLevel = level
 
 	var problems []string
-	if cfg.EventsURL == "" {
-		problems = append(problems, "KARTE_EVENTS_URL が未設定です")
-	} else if err := checkURL(cfg.EventsURL, "http", "https"); err != nil {
-		problems = append(problems, "KARTE_EVENTS_URL: "+err.Error())
-	}
 	// 空のトークンで起動すると、通知のたびに 401 で弾かれ続けるだけになる。
 	if cfg.InboundToken == "" {
 		problems = append(problems, "KARTE_INBOUND_TOKEN が未設定です")
@@ -84,12 +100,29 @@ func Load(getenv func(string) string, exeDir string) (Config, error) {
 
 	switch cfg.Adapter {
 	case AdapterOrcaPush:
+		// 通知を届ける先。ssmix2-storage は取りに行くだけなので要らない。
+		if cfg.EventsURL == "" {
+			problems = append(problems, "KARTE_EVENTS_URL が未設定です")
+		} else if err := checkURL(cfg.EventsURL, "http", "https"); err != nil {
+			problems = append(problems, "KARTE_EVENTS_URL: "+err.Error())
+		}
 		if err := checkURL(cfg.Orca.WSURL, "ws", "wss"); err != nil {
 			problems = append(problems, "ORCA_WS_URL: "+err.Error())
 		}
 		if (cfg.Orca.TLSCert == "") != (cfg.Orca.TLSKey == "") {
 			problems = append(problems, "ORCA_TLS_CERT と ORCA_TLS_KEY は両方指定してください")
 		}
+	case AdapterSsmix2Storage:
+		if cfg.Ssmix2.MessagesURL == "" {
+			problems = append(problems, "KARTE_SSMIX2_URL が未設定です")
+		} else if err := checkURL(cfg.Ssmix2.MessagesURL, "http", "https"); err != nil {
+			problems = append(problems, "KARTE_SSMIX2_URL: "+err.Error())
+		}
+		interval, err := parseInterval(getenv("SSMIX2_POLL_INTERVAL"))
+		if err != nil {
+			problems = append(problems, "SSMIX2_POLL_INTERVAL: "+err.Error())
+		}
+		cfg.Ssmix2.PollInterval = interval
 	default:
 		problems = append(problems, fmt.Sprintf("AGENT_ADAPTER=%q は対応していません", cfg.Adapter))
 	}
@@ -132,4 +165,20 @@ func parseLevel(raw string) (slog.Level, error) {
 		return slog.LevelError, nil
 	}
 	return 0, fmt.Errorf("LOG_LEVEL=%q は DEBUG / INFO / WARN / ERROR のいずれかにしてください", raw)
+}
+
+// parseInterval は "10s" / "1m" の形。空なら既定。1 秒未満は連打になるので弾く。
+func parseInterval(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultSsmix2PollInterval, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%q は 10s や 1m の形で指定してください", raw)
+	}
+	if d < time.Second {
+		return 0, fmt.Errorf("%q は 1 秒以上にしてください", raw)
+	}
+	return d, nil
 }

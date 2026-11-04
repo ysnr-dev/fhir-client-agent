@@ -30,6 +30,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+# ssmix2-storage のときは、標準化ストレージの出力先(カルテの施設設定の root_path)もここに足す。
 ReadWritePaths=/var/lib/fhir-client-agent
 
 SyslogIdentifier=fhir-client-agent

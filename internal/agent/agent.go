@@ -27,7 +27,8 @@ type Adapter interface {
 	Run(ctx context.Context, emit func(event.Event), ready func()) error
 }
 
-// Agent は Adapter を動かし続ける。
+// Agent は Adapter を動かし続ける。deliverer は通知を届けるアダプタだけが持ち、
+// 取りに行って書くだけのアダプタ(ssmix2-storage)では nil。
 type Agent struct {
 	adapter   Adapter
 	deliverer *deliver.Deliverer
@@ -57,11 +58,13 @@ func New(adapter Adapter, deliverer *deliver.Deliverer, log *slog.Logger) *Agent
 // Run は ctx が終わるまで戻らない。終わるときは、未送信のイベントを退避してから返る。
 func (a *Agent) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		a.deliverer.Run(ctx)
-	}()
+	if a.deliverer != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.deliverer.Run(ctx)
+		}()
+	}
 
 	backoff := a.MinBackoff
 	for ctx.Err() == nil {
@@ -91,7 +94,15 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 
 	wg.Wait()
-	a.log.Info("stopped", "adapter", a.adapter.Name(), "spooled", a.deliverer.SpoolCount())
+	a.log.Info("stopped", "adapter", a.adapter.Name(), "spooled", a.spooled())
+}
+
+// spooled は退避中の件数。送達を持たないアダプタでは 0。
+func (a *Agent) spooled() int {
+	if a.deliverer == nil {
+		return 0
+	}
+	return a.deliverer.SpoolCount()
 }
 
 func (a *Agent) emit(e event.Event) {
@@ -99,7 +110,9 @@ func (a *Agent) emit(e event.Event) {
 	a.lastEventAt = time.Now()
 	a.events++
 	a.mu.Unlock()
-	a.deliverer.Enqueue(e)
+	if a.deliverer != nil {
+		a.deliverer.Enqueue(e)
+	}
 }
 
 func (a *Agent) setConnected(v bool) {
@@ -128,7 +141,7 @@ func (a *Agent) Status() Status {
 		Adapter:   a.adapter.Name(),
 		Connected: a.connected,
 		Events:    a.events,
-		Spooled:   a.deliverer.SpoolCount(),
+		Spooled:   a.spooled(),
 	}
 	if a.connected {
 		s.ConnectedAt = a.connectedAt.Format(time.RFC3339)

@@ -57,6 +57,9 @@ func TestLoadRejects(t *testing.T) {
 		{"証明書が片方だけ", with(map[string]string{"ORCA_TLS_CERT": "/c.crt"}), "ORCA_TLS_KEY"},
 		{"知らないアダプタ", with(map[string]string{"AGENT_ADAPTER": "dicom-scp"}), "dicom-scp"},
 		{"知らないログレベル", with(map[string]string{"LOG_LEVEL": "loud"}), "LOG_LEVEL"},
+		{"SS-MIX2 の受け渡し口なし", map[string]string{"AGENT_ADAPTER": AdapterSsmix2Storage, "KARTE_INBOUND_TOKEN": "x"}, "KARTE_SSMIX2_URL"},
+		{"SS-MIX2 の間隔が短すぎる", map[string]string{"AGENT_ADAPTER": AdapterSsmix2Storage, "KARTE_INBOUND_TOKEN": "x",
+			"KARTE_SSMIX2_URL": "https://karte.example/integrations/ssmix2/messages", "SSMIX2_POLL_INTERVAL": "500ms"}, "SSMIX2_POLL_INTERVAL"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -65,6 +68,22 @@ func TestLoadRejects(t *testing.T) {
 				t.Errorf("err = %v, want mention of %s", err, tc.want)
 			}
 		})
+	}
+}
+
+// ssmix2-storage は取りに行くだけなので、通知の送り先(KARTE_EVENTS_URL)は要らない。
+func TestLoadSsmix2Storage(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"AGENT_ADAPTER":       AdapterSsmix2Storage,
+		"KARTE_INBOUND_TOKEN": "secret",
+		"KARTE_SSMIX2_URL":    "https://karte.example/integrations/ssmix2/messages",
+		"SSMIX2_ALLOWED_ROOT": "/mnt/ssmix2",
+	}), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Ssmix2.PollInterval != defaultSsmix2PollInterval || cfg.Ssmix2.AllowedRoot != "/mnt/ssmix2" || cfg.EventsURL != "" {
+		t.Errorf("ssmix2: %+v", cfg)
 	}
 }
 

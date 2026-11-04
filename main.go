@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/ysnr-dev/fhir-client-agent/internal/adapter/orcapush"
+	"github.com/ysnr-dev/fhir-client-agent/internal/adapter/ssmix2"
 	"github.com/ysnr-dev/fhir-client-agent/internal/agent"
 	"github.com/ysnr-dev/fhir-client-agent/internal/config"
 	"github.com/ysnr-dev/fhir-client-agent/internal/deliver"
@@ -46,9 +47,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	deliverer, err := deliver.New(cfg.EventsURL, cfg.InboundToken, cfg.SpoolDir, log)
-	if err != nil {
-		return err
+	// 通知を届けるアダプタだけが送達を持つ。ssmix2-storage は取りに行って書くだけ。
+	var deliverer *deliver.Deliverer
+	if cfg.EventsURL != "" {
+		deliverer, err = deliver.New(cfg.EventsURL, cfg.InboundToken, cfg.SpoolDir, log)
+		if err != nil {
+			return err
+		}
 	}
 
 	// SIGTERM(systemd / docker stop)で、未送信のイベントを退避してから終わる。
@@ -63,7 +68,7 @@ func run() error {
 	}
 
 	log.Info("starting", "version", version, "adapter", adapter.Name(),
-		"events_url", cfg.EventsURL, "spool_dir", cfg.SpoolDir)
+		"events_url", cfg.EventsURL, "spool_dir", cfg.SpoolDir, "ssmix2_url", cfg.Ssmix2.MessagesURL)
 	a.Run(ctx)
 	return nil
 }
@@ -72,6 +77,8 @@ func buildAdapter(cfg config.Config, log *slog.Logger) (agent.Adapter, error) {
 	switch cfg.Adapter {
 	case config.AdapterOrcaPush:
 		return orcapush.New(cfg.Orca, log)
+	case config.AdapterSsmix2Storage:
+		return ssmix2.New(cfg.Ssmix2, cfg.InboundToken, log), nil
 	}
 	return nil, fmt.Errorf("AGENT_ADAPTER=%q は対応していません", cfg.Adapter)
 }
