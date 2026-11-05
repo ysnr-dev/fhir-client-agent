@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,8 +55,9 @@ func TestRunPollsWritesAndAcks(t *testing.T) {
 	}))
 	defer karte.Close()
 
-	a := New(config.Ssmix2Storage{MessagesURL: karte.URL + "/integrations/ssmix2/messages", PollInterval: 20 * time.Millisecond},
-		"secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	trDir := filepath.Join(t.TempDir(), "tr")
+	a := New(config.Ssmix2Storage{MessagesURL: karte.URL + "/integrations/ssmix2/messages", PollInterval: 20 * time.Millisecond,
+		TransactionDir: trDir, TransactionLineNo: "0001"}, "secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	readyCalls := 0
@@ -80,6 +82,19 @@ func TestRunPollsWritesAndAcks(t *testing.T) {
 	file := filepath.Join(root, "000", "123", "0001234", "-", "ADT-00", "0001234_-_ADT-00_ALL9_20261104100000001_-_1")
 	if body, err := os.ReadFile(file); err != nil || string(body) != "MSH|a\r" {
 		t.Errorf("file %s: %v %q", file, err, body)
+	}
+	// 書けた 1 件がトランザクションストレージにも追記されている(失敗した 1 件は無い)。
+	years, err := os.ReadDir(trDir)
+	if err != nil || len(years) != 1 {
+		t.Fatalf("transaction dir: %v %v", years, err)
+	}
+	logs, _ := os.ReadDir(filepath.Join(trDir, years[0].Name()))
+	if len(logs) != 1 || !strings.HasPrefix(logs[0].Name(), "TR_") || !strings.HasSuffix(logs[0].Name(), "_0001.DAT") {
+		t.Fatalf("transaction files: %v", logs)
+	}
+	record, _ := os.ReadFile(filepath.Join(trDir, years[0].Name(), logs[0].Name()))
+	if string(record) != "#SSMIX,2.00,2219999998,0001234,-,ADT-00,ALL9,INS,-,20261104100000001\x1e\rMSH|a\r\x1c\r" {
+		t.Errorf("transaction record = %q", record)
 	}
 }
 

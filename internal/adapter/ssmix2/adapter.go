@@ -29,10 +29,13 @@ type Adapter struct {
 	token  string
 	client *http.Client
 	log    *slog.Logger
+	// trlog はトランザクションストレージ。設定が無ければ nil で、何もしない。
+	trlog *TransactionLog
 }
 
 func New(cfg config.Ssmix2Storage, token string, log *slog.Logger) *Adapter {
-	return &Adapter{cfg: cfg, token: token, client: &http.Client{Timeout: 60 * time.Second}, log: log}
+	return &Adapter{cfg: cfg, token: token, client: &http.Client{Timeout: 60 * time.Second}, log: log,
+		trlog: NewTransactionLog(cfg.TransactionDir, cfg.TransactionLineNo)}
 }
 
 func (a *Adapter) Name() string { return config.AdapterSsmix2Storage }
@@ -75,6 +78,7 @@ type ackFailure struct {
 // Run はカルテを定期的に取りに行き、受けたメッセージを順に書いて ack する。
 // HTTP が通らなければエラーで返し、土台(agent.Agent)の再接続バックオフに任せる。
 func (a *Adapter) Run(ctx context.Context, _ func(event.Event), ready func()) error {
+	defer a.trlog.Close()
 	connected := false
 	for {
 		res, err := a.poll(ctx)
@@ -123,6 +127,13 @@ func (a *Adapter) handle(ctx context.Context, res *response) {
 			continue
 		}
 		a.log.Info("written", "id", m.ID, "data_kind", m.DataKind, "process", m.Process, "file", outcome.Path, "already", outcome.Existed)
+		// トランザクションストレージは発生順の記録なので、配り直しで既にあった分は書かない。
+		if !outcome.Existed {
+			if err := a.trlog.Append(res.Storage.FacilityID, m, outcome.Body); err != nil {
+				// 標準化ストレージには置けている。記録の写しが欠けたことだけ残す。
+				a.log.Error("transaction log failed", "id", m.ID, "error", err)
+			}
+		}
 		ack.Written = append(ack.Written, m.ID)
 	}
 	if err := a.ack(ctx, ack); err != nil {

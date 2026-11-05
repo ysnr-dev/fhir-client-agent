@@ -44,6 +44,10 @@ type Ssmix2Storage struct {
 	PollInterval time.Duration
 	// AllowedRoot が空でなければ、カルテが指定した出力先はこの下でなければ書かない。
 	AllowedRoot string
+	// TransactionDir が空でなければ、置いたメッセージをトランザクションストレージとしてここにも追記する。
+	TransactionDir string
+	// TransactionLineNo はトランザクションデータファイル名の処理系統番号。
+	TransactionLineNo string
 }
 
 // OrcaPush は日レセ PUSH 通知アダプタの設定。
@@ -61,7 +65,10 @@ const (
 	AdapterSsmix2Storage = "ssmix2-storage"
 )
 
-const defaultSsmix2PollInterval = 10 * time.Second
+const (
+	defaultSsmix2PollInterval = 10 * time.Second
+	defaultSsmix2LineNo       = "0001"
+)
 
 // Load は getenv から設定を組み立てて検証する。getenv を注入するのはテストのため。
 func Load(getenv func(string) string, exeDir string) (Config, error) {
@@ -81,8 +88,10 @@ func Load(getenv func(string) string, exeDir string) (Config, error) {
 			TLSCA:    getenv("ORCA_TLS_CA"),
 		},
 		Ssmix2: Ssmix2Storage{
-			MessagesURL: strings.TrimSpace(getenv("KARTE_SSMIX2_URL")),
-			AllowedRoot: strings.TrimSpace(getenv("SSMIX2_ALLOWED_ROOT")),
+			MessagesURL:       strings.TrimSpace(getenv("KARTE_SSMIX2_URL")),
+			AllowedRoot:       strings.TrimSpace(getenv("SSMIX2_ALLOWED_ROOT")),
+			TransactionDir:    strings.TrimSpace(getenv("SSMIX2_TRANSACTION_DIR")),
+			TransactionLineNo: or(getenv("SSMIX2_TRANSACTION_LINE_NO"), defaultSsmix2LineNo),
 		},
 	}
 
@@ -123,6 +132,12 @@ func Load(getenv func(string) string, exeDir string) (Config, error) {
 			problems = append(problems, "SSMIX2_POLL_INTERVAL: "+err.Error())
 		}
 		cfg.Ssmix2.PollInterval = interval
+		if cfg.Ssmix2.TransactionDir != "" && !filepath.IsAbs(cfg.Ssmix2.TransactionDir) && !strings.HasPrefix(cfg.Ssmix2.TransactionDir, `\\`) {
+			problems = append(problems, "SSMIX2_TRANSACTION_DIR は絶対パスで指定してください")
+		}
+		if strings.ContainsAny(cfg.Ssmix2.TransactionLineNo, "_/\\.") {
+			problems = append(problems, "SSMIX2_TRANSACTION_LINE_NO に _ やパス区切りは使えません")
+		}
 	default:
 		problems = append(problems, fmt.Sprintf("AGENT_ADAPTER=%q は対応していません", cfg.Adapter))
 	}

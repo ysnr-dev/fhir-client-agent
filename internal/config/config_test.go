@@ -85,6 +85,27 @@ func TestLoadSsmix2Storage(t *testing.T) {
 	if cfg.Ssmix2.PollInterval != defaultSsmix2PollInterval || cfg.Ssmix2.AllowedRoot != "/mnt/ssmix2" || cfg.EventsURL != "" {
 		t.Errorf("ssmix2: %+v", cfg)
 	}
+	if cfg.Ssmix2.TransactionDir != "" || cfg.Ssmix2.TransactionLineNo != defaultSsmix2LineNo {
+		t.Errorf("transaction storage defaults: %+v", cfg.Ssmix2)
+	}
+
+	// トランザクションストレージは絶対パスで、処理系統番号に _ は使えない。
+	_, err = Load(env(map[string]string{
+		"AGENT_ADAPTER": AdapterSsmix2Storage, "KARTE_INBOUND_TOKEN": "secret",
+		"KARTE_SSMIX2_URL":       "https://karte.example/integrations/ssmix2/messages",
+		"SSMIX2_TRANSACTION_DIR": "relative/tr", "SSMIX2_TRANSACTION_LINE_NO": "00_1",
+	}), ".")
+	if err == nil || !strings.Contains(err.Error(), "SSMIX2_TRANSACTION_DIR") || !strings.Contains(err.Error(), "SSMIX2_TRANSACTION_LINE_NO") {
+		t.Errorf("expected transaction storage problems, got %v", err)
+	}
+	cfg, err = Load(env(map[string]string{
+		"AGENT_ADAPTER": AdapterSsmix2Storage, "KARTE_INBOUND_TOKEN": "secret",
+		"KARTE_SSMIX2_URL":       "https://karte.example/integrations/ssmix2/messages",
+		"SSMIX2_TRANSACTION_DIR": "/mnt/ssmix2-tr", "SSMIX2_TRANSACTION_LINE_NO": "5678",
+	}), ".")
+	if err != nil || cfg.Ssmix2.TransactionDir != "/mnt/ssmix2-tr" || cfg.Ssmix2.TransactionLineNo != "5678" {
+		t.Errorf("transaction storage: %+v %v", cfg.Ssmix2, err)
+	}
 }
 
 func TestParseDotenv(t *testing.T) {

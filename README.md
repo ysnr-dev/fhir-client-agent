@@ -66,6 +66,9 @@ Go 製の単一バイナリで、院内機に Go も Ruby も Docker も要り�
 - 書けた id を `POST …/messages/ack` で返す。返せなくてもカルテが配り直し、同じファイル名が既にあれば
   何もしないので二重には書かない。
 - 出力先はカルテが決める。`SSMIX2_ALLOWED_ROOT` を置くと、その下以外の出力先は拒んで ack せずに残す。
+- `SSMIX2_TRANSACTION_DIR` を置くと、置いたメッセージをトランザクションストレージ(構築ガイドライン 3.3)として
+  `<dir>/<年>/TR_<書き始めた日時>_<処理系統番号>.DAT` にも追記する(SS-MIX ヘッダー + HL7、1 件ごとに
+  `<EOH>` `<EOM>` 付き。日付が変わるか 100MB に達したら次のファイル)。標準化ストレージの再構築や複製の元にする。
 - 電文の中身(文字コード CP50221、セグメント)はカルテが組む。このアダプタは触らない。
 - 日レセ連携と同じ院内サーバーで動かすときは、`AGENT_ADAPTER` を変えた **2 つ目のプロセス**として起動する
   (1 プロセス 1 連携)。
@@ -93,6 +96,8 @@ Go 製の単一バイナリで、院内機に Go も Ruby も Docker も要り�
 | `KARTE_SSMIX2_URL` | (ssmix2-storage で必須) | `https://<カルテ>/integrations/ssmix2/messages` |
 | `SSMIX2_POLL_INTERVAL` | `10s` | 取りに行く間隔 |
 | `SSMIX2_ALLOWED_ROOT` | (制限しない) | カルテが指定した出力先を、この下に限る |
+| `SSMIX2_TRANSACTION_DIR` | (持たない) | トランザクションストレージの置き場(絶対パス) |
+| `SSMIX2_TRANSACTION_LINE_NO` | `0001` | トランザクションデータファイル名の処理系統番号 |
 | `ORCA_WS_URL` | `ws://localhost:8000/ws` | 日レセの PUSH 接続先 |
 | `ORCA_TENANT_ID` | `1` | `X-GINBEE-TENANT-ID`。オンプレは 1 固定 |
 | `ORCA_TLS_CERT` / `_KEY` / `_CA` | — | クラウド版の SSL クライアント認証 |

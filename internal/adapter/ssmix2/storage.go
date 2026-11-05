@@ -10,9 +10,11 @@ import (
 )
 
 // Outcome は 1 件の書き込みの結果。Existed は同じファイルが既にあって何もしなかったこと。
+// Body は置いた電文(トランザクションストレージへの追記に使う)。
 type Outcome struct {
 	Path    string
 	Existed bool
+	Body    []byte
 }
 
 // Write はメッセージを標準化ストレージの規則で置く。
@@ -47,7 +49,7 @@ func Write(root string, m Message) (Outcome, error) {
 	final := filepath.Join(dir, stem+"_"+flag)
 
 	if existing, _ := filepath.Glob(filepath.Join(dir, stem+"_*")); len(existing) > 0 {
-		return Outcome{Path: existing[0], Existed: true}, nil
+		return Outcome{Path: existing[0], Existed: true, Body: body}, nil
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Outcome{}, fmt.Errorf("mkdir: %w", err)
@@ -72,7 +74,7 @@ func Write(root string, m Message) (Outcome, error) {
 		os.Remove(tmp)
 		return Outcome{}, fmt.Errorf("rename: %w", err)
 	}
-	return Outcome{Path: final}, nil
+	return Outcome{Path: final, Body: body}, nil
 }
 
 // renameFlags は prefix で始まり末尾のフラグが from のいずれかのファイルを to に改名する。

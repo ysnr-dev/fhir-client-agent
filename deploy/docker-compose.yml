@@ -34,6 +34,9 @@ services:
     environment:
       AGENT_ADAPTER: ssmix2-storage
       SSMIX2_ALLOWED_ROOT: /ssmix2
+      # トランザクションストレージも持つなら、出力先と同じ共有フォルダの下に置く。
+      SSMIX2_TRANSACTION_DIR: /ssmix2/transaction
+      TZ: Asia/Tokyo
     volumes:
       - /mnt/ssmix2:/ssmix2
     stop_grace_period: 30s
