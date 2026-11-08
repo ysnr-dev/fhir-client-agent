@@ -98,6 +98,74 @@ func TestRunPollsWritesAndAcks(t *testing.T) {
 	}
 }
 
+// 拡張ストレージの文書は別のルートにコンテンツフォルダで置き、拡張ストレージのルートが無いときはその分だけ残す。
+func TestRunWritesDocumentsToTheExtendedRoot(t *testing.T) {
+	root := t.TempDir()
+	extRoot := filepath.Join(root, "ext")
+	var mu sync.Mutex
+	polls := 0
+	var acked ackRequest
+	withExtended := true
+
+	karte := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet:
+			polls++
+			res := response{Enabled: true, Storage: storage{RootPath: root, FacilityID: "2219999998"}}
+			if withExtended {
+				res.Storage.ExtendedRootPath = extRoot
+			}
+			if polls == 1 {
+				res.Messages = []Message{document("INS", "20261104100000001")}
+			}
+			json.NewEncoder(w).Encode(res)
+		case r.Method == http.MethodPost:
+			json.NewDecoder(r.Body).Decode(&acked)
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer karte.Close()
+
+	run := func() {
+		a := New(config.Ssmix2Storage{MessagesURL: karte.URL, PollInterval: 10 * time.Millisecond, AllowedRoot: root},
+			"secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		if err := a.Run(ctx, func(event.Event) {}, func() {}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run()
+	mu.Lock()
+	if len(acked.Written) != 1 || acked.Written[0] != 1 {
+		t.Errorf("ack = %+v", acked)
+	}
+	mu.Unlock()
+	folder := filepath.Join(extRoot, "000", "123", "0001234", "20261104", noteFolder,
+		"0001234_20261104_11506-3_000000000000045_20261104100000001_01_1")
+	if body, err := os.ReadFile(filepath.Join(folder, "HL7CDA.xml")); err != nil || string(body) != "<ClinicalDocument/>" {
+		t.Errorf("document %s: %v %q", folder, err, body)
+	}
+	if _, err := os.Stat(filepath.Join(root, "000")); !os.IsNotExist(err) {
+		t.Errorf("the standard root must not get a document folder: %v", err)
+	}
+
+	mu.Lock()
+	polls = 0
+	acked = ackRequest{}
+	withExtended = false
+	mu.Unlock()
+	run()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(acked.Written) != 0 || len(acked.Failed) != 0 {
+		t.Errorf("documents must be left on the karte without an extended root: %+v", acked)
+	}
+}
+
 // 出力先が許可ルートの外なら書かず、ack もしない(カルテ側に残して直してもらう)。
 func TestRunLeavesMessagesWhenRootIsNotAllowed(t *testing.T) {
 	var acks int

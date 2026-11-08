@@ -48,13 +48,18 @@ type response struct {
 }
 
 type storage struct {
-	RootPath   string `json:"root_path"`
-	FacilityID string `json:"facility_id"`
+	RootPath string `json:"root_path"`
+	// ExtendedRootPath は拡張ストレージ(診療文書)のルート。標準化ストレージとは別のフォルダ(構築ガイドライン 2.2(1))。
+	ExtendedRootPath string `json:"extended_root_path"`
+	FacilityID       string `json:"facility_id"`
 }
 
 // Message はメッセージ 1 件。ヘッダー項目がフォルダとファイル名を決め、Body が電文(CP50221)。
+// Storage が extended なら拡張ストレージの診療文書で、Body は主文書(HL7 CDA R2、UTF-8)、DocumentFolder が
+// データ種別フォルダ名、FileName が主文書のファイル名、Files が同じコンテンツフォルダに置く他のファイル。
 type Message struct {
 	ID             int64  `json:"id"`
+	Storage        string `json:"storage"`
 	PatientID      string `json:"patient_id"`
 	ServiceDate    string `json:"service_date"`
 	DataKind       string `json:"data_kind"`
@@ -63,7 +68,13 @@ type Message struct {
 	DepartmentCode string `json:"department_code"`
 	TransactionAt  string `json:"transaction_at"`
 	BodyBase64     string `json:"body_base64"`
+	DocumentFolder string `json:"document_folder"`
+	DocumentName   string `json:"document_name"`
+	FileName       string `json:"file_name"`
+	Files          []File `json:"files"`
 }
+
+func (m Message) extended() bool { return m.Storage == StorageExtended }
 
 type ackRequest struct {
 	Written []int64      `json:"written"`
@@ -111,24 +122,41 @@ func (a *Adapter) Run(ctx context.Context, _ func(event.Event), ready func()) er
 }
 
 func (a *Adapter) handle(ctx context.Context, res *response) {
+	// 出力先の設定が間違っている種類のメッセージは ack せずに置いておく。直したあとに配り直される。
 	root := res.Storage.RootPath
-	if err := checkRoot(root, a.cfg.AllowedRoot); err != nil {
-		// 出力先の設定が間違っている。ack せずに置いておけば、直したあとに配り直される。
-		a.log.Error("output root rejected; messages left on the karte", "root", root, "error", err)
-		return
+	rootErr := checkRoot(root, a.cfg.AllowedRoot)
+	if rootErr != nil {
+		a.log.Error("output root rejected; messages left on the karte", "root", root, "error", rootErr)
+	}
+	extRoot := res.Storage.ExtendedRootPath
+	extErr := checkRoot(extRoot, a.cfg.AllowedRoot)
+	if extErr != nil && hasExtended(res.Messages) {
+		a.log.Error("extended storage root rejected; documents left on the karte", "root", extRoot, "error", extErr)
 	}
 
 	ack := ackRequest{Written: []int64{}, Failed: []ackFailure{}}
 	for _, m := range res.Messages {
-		outcome, err := Write(root, m)
+		var outcome Outcome
+		var err error
+		if m.extended() {
+			if extErr != nil {
+				continue
+			}
+			outcome, err = WriteDocument(extRoot, m)
+		} else {
+			if rootErr != nil {
+				continue
+			}
+			outcome, err = Write(root, m)
+		}
 		if err != nil {
 			a.log.Error("write failed", "id", m.ID, "data_kind", m.DataKind, "error", err)
 			ack.Failed = append(ack.Failed, ackFailure{ID: m.ID, Error: err.Error()})
 			continue
 		}
-		a.log.Info("written", "id", m.ID, "data_kind", m.DataKind, "process", m.Process, "file", outcome.Path, "already", outcome.Existed)
-		// トランザクションストレージは発生順の記録なので、配り直しで既にあった分は書かない。
-		if !outcome.Existed {
+		a.log.Info("written", "id", m.ID, "storage", m.Storage, "data_kind", m.DataKind, "process", m.Process, "file", outcome.Path, "already", outcome.Existed)
+		// トランザクションストレージは標準化ストレージの発生順の記録。配り直しで既にあった分と拡張ストレージの文書は書かない。
+		if !outcome.Existed && !m.extended() {
 			if err := a.trlog.Append(res.Storage.FacilityID, m, outcome.Body); err != nil {
 				// 標準化ストレージには置けている。記録の写しが欠けたことだけ残す。
 				a.log.Error("transaction log failed", "id", m.ID, "error", err)
@@ -140,6 +168,15 @@ func (a *Adapter) handle(ctx context.Context, res *response) {
 		// 書けた分はファイルがあるので、配り直されても二重には書かない。
 		a.log.Warn("ack failed; the karte will redeliver", "error", err)
 	}
+}
+
+func hasExtended(messages []Message) bool {
+	for _, m := range messages {
+		if m.extended() {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Adapter) poll(ctx context.Context) (*response, error) {

@@ -57,11 +57,11 @@ func Write(root string, m Message) (Outcome, error) {
 
 	prefix := strings.Join([]string{m.PatientID, m.ServiceDate, m.DataKind, m.OrderNo}, "_") + "_"
 	if m.Process == "DEL" {
-		if err := renameFlags(dir, prefix, []string{"1", "2"}, "0"); err != nil {
+		if err := renameFlags(dir, prefix, []string{"1", "2"}, "0", false); err != nil {
 			return Outcome{}, err
 		}
 	} else {
-		if err := renameFlags(dir, prefix, []string{"1"}, "2"); err != nil {
+		if err := renameFlags(dir, prefix, []string{"1"}, "2", false); err != nil {
 			return Outcome{}, err
 		}
 	}
@@ -77,16 +77,16 @@ func Write(root string, m Message) (Outcome, error) {
 	return Outcome{Path: final, Body: body}, nil
 }
 
-// renameFlags は prefix で始まり末尾のフラグが from のいずれかのファイルを to に改名する。
-// ファイル名は 7 項目で、prefix より後ろは "日時_診療科_フラグ"。
-func renameFlags(dir, prefix string, from []string, to string) error {
+// renameFlags は prefix で始まり末尾のフラグが from のいずれかのファイル(folders なら拡張ストレージの
+// コンテンツフォルダ)を to に改名する。名前は 7 項目で、prefix より後ろは "日時_診療科_フラグ"。
+func renameFlags(dir, prefix string, from []string, to string, folders bool) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("readdir: %w", err)
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, prefix) || strings.HasSuffix(name, ".tmp") {
+		if entry.IsDir() != folders || !strings.HasPrefix(name, prefix) || strings.HasSuffix(name, ".tmp") {
 			continue
 		}
 		rest := strings.Split(strings.TrimPrefix(name, prefix), "_")
